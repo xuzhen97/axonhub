@@ -465,55 +465,66 @@ func (a *streamAggregator) processEvent(ev *StreamEvent) {
 				item = a.lastItemByOutputIndex(ev.OutputIndex)
 			}
 
-			if item != nil {
-				if ev.Item.Status != nil {
-					item.Status = *ev.Item.Status
-				}
+			// Codex may omit output_item.added for image_generation_call items
+			// and only send output_item.done. Create a placeholder so the
+			// result isn't silently dropped.
+			if item == nil {
+				item = newAggregatedItem()
+				a.outputItems[ev.OutputIndex] = append(a.outputItems[ev.OutputIndex], item)
+			}
 
-				if item.Status == "" {
-					item.Status = "completed"
-				}
+			// Always propagate type so buildResponse can route it correctly.
+			if ev.Item.Type != "" {
+				item.Type = ev.Item.Type
+			}
 
-				// Update with final data if provided
-				if ev.Item.Arguments != "" {
-					item.Arguments.Reset()
-					item.Arguments.WriteString(ev.Item.Arguments)
-				}
+			if ev.Item.Status != nil {
+				item.Status = *ev.Item.Status
+			}
 
-				if ev.Item.Content != nil {
-					for idx, contentItem := range ev.Item.Content.Items {
-						part := ensureContentPart(item, idx)
-						if part == nil {
-							continue
-						}
-						if contentItem.Type != "" {
-							part.Type = contentItem.Type
-						}
-						if contentItem.Text != nil {
-							applyDoneText(part.Text, *contentItem.Text)
-						}
-						if contentItem.Annotations != nil {
-							part.Annotations = append([]Annotation(nil), contentItem.Annotations...)
-						}
+			if item.Status == "" {
+				item.Status = "completed"
+			}
+
+			// Update with final data if provided
+			if ev.Item.Arguments != "" {
+				item.Arguments.Reset()
+				item.Arguments.WriteString(ev.Item.Arguments)
+			}
+
+			if ev.Item.Content != nil {
+				for idx, contentItem := range ev.Item.Content.Items {
+					part := ensureContentPart(item, idx)
+					if part == nil {
+						continue
+					}
+					if contentItem.Type != "" {
+						part.Type = contentItem.Type
+					}
+					if contentItem.Text != nil {
+						applyDoneText(part.Text, *contentItem.Text)
+					}
+					if contentItem.Annotations != nil {
+						part.Annotations = append([]Annotation(nil), contentItem.Annotations...)
 					}
 				}
+			}
 
-				if len(ev.Item.Summary) > 0 {
-					for idx, s := range ev.Item.Summary {
-						part := ensureSummaryPart(item, idx)
-						part.Type = s.Type
-						applyDoneText(part.Text, s.Text)
-						part.Final = true
-					}
+			if len(ev.Item.Summary) > 0 {
+				for idx, s := range ev.Item.Summary {
+					part := ensureSummaryPart(item, idx)
+					part.Type = s.Type
+					applyDoneText(part.Text, s.Text)
+					part.Final = true
 				}
+			}
 
-				if ev.Item.EncryptedContent != nil {
-					item.EncryptedContent = ev.Item.EncryptedContent
-				}
+			if ev.Item.EncryptedContent != nil {
+				item.EncryptedContent = ev.Item.EncryptedContent
+			}
 
-				if ev.Item.Result != nil {
-					item.Result = ev.Item.Result
-				}
+			if ev.Item.Result != nil {
+				item.Result = ev.Item.Result
 			}
 		}
 
