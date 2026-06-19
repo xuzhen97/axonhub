@@ -349,6 +349,20 @@ func (e *codexExecutor) Do(ctx context.Context, request *httpclient.Request) (*h
 		return nil, err
 	}
 
+	// For image requests, scan SSE chunks for image_generation_call result
+	// before normal aggregation. Codex returns the image data in
+	// response.output_item.done events which the standard aggregator may miss.
+	if request.RequestType == llm.RequestTypeImage.String() {
+		if result := findImageResult(chunks); result != "" {
+			return &httpclient.Response{
+				StatusCode: http.StatusOK,
+				Headers:    http.Header{"Content-Type": []string{"application/json"}},
+				Body:       []byte(result),
+				Request:    request,
+			}, nil
+		}
+	}
+
 	body, _, err := e.transformer.AggregateStreamChunks(ctx, request, chunks)
 	if err != nil {
 		return nil, err
@@ -366,4 +380,36 @@ func (e *codexExecutor) Do(ctx context.Context, request *httpclient.Request) (*h
 
 func (e *codexExecutor) DoStream(ctx context.Context, request *httpclient.Request) (streams.Stream[*httpclient.StreamEvent], error) {
 	return e.inner.DoStream(ctx, request)
+}
+
+// findImageResult scans SSE chunks for a completed image_generation_call result.
+// The result arrives in response.output_item.done events with item.result base64 data.
+func findImageResult(chunks []*httpclient.StreamEvent) string {
+	for _, ch := range chunks {
+		var ev map[string]any
+		if err := json.Unmarshal(ch.Data, &ev); err != nil {
+			continue
+		}
+		if t, _ := ev["type"].(string); t == "response.output_item.done" {
+			item, ok := ev["item"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if itemType, _ := item["type"].(string); itemType == "image_generation_call" {
+				if result, ok := item["result"].(string); ok && result != "" {
+					outFormat := "png"
+					if f, ok := item["output_format"].(string); ok && f != "" {
+						outFormat = f
+					}
+
+					return fmt.Sprintf(
+						`{"output":[{"type":"image_generation_call","result":"%s","output_format":"%s","status":"completed"}]}`,
+						result, outFormat,
+					)
+				}
+			}
+		}
+	}
+
+	return ""
 }

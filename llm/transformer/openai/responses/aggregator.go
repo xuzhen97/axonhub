@@ -530,25 +530,28 @@ func (a *streamAggregator) processEvent(ev *StreamEvent) {
 
 	case StreamEventTypeImageGenerationCompleted:
 		// Codex sends image results via response.image_generation_call.completed
-		// instead of response.output_item.done. The base64 image data is in
-		// the source field, not in item.result.
-		item := a.getItemForEvent(ev.OutputIndex, nil)
+		// instead of response.output_item.done. Find or create the item and
+		// capture the completed base64 data from item.result.
+		item := a.getItemForEvent(ev.OutputIndex, ev.ItemID)
 		if item == nil {
 			item = newAggregatedItem()
 			a.outputItems[ev.OutputIndex] = append(a.outputItems[ev.OutputIndex], item)
 		}
 
-		item.Type = "image_generation_call"
+		if ev.Item != nil {
+			if ev.Item.Type != "" {
+				item.Type = ev.Item.Type
+			}
+			if ev.Item.Result != nil {
+				item.Result = ev.Item.Result
+			}
+			if item.ID == "" && ev.Item.ID != "" {
+				item.ID = ev.Item.ID
+				a.outputItemsByID[item.ID] = item
+			}
+		}
+
 		item.Status = "completed"
-
-		if ev.Source != nil && *ev.Source != "" {
-			item.Result = ev.Source
-		}
-
-		if ev.ItemID != nil && *ev.ItemID != "" {
-			item.ID = *ev.ItemID
-			a.outputItemsByID[item.ID] = item
-		}
 
 	case StreamEventTypeResponseCompleted:
 		a.status = "completed"
